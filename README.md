@@ -1,53 +1,74 @@
 # DevOps Agent
 
-An AI-powered deployment manager that automates the end-to-end onboarding and deployment of applications to Kubernetes via a GitOps workflow. Developers chat with the agent to onboard a new app; DevOps engineers review and approve; ArgoCD deploys automatically.
+An AI-powered deployment manager with a chat interface. Developers onboard their GitHub repos through conversation; DevOps engineers review and approve; ArgoCD handles deployments automatically via GitOps.
+
+Built on any OpenAI-compatible LLM (Anthropic Claude, OpenAI, Ollama, etc.) with a React frontend, FastAPI backend, and WebSocket streaming.
 
 ---
 
 ## How It Works
 
+Two personas interact through separate chat sessions:
+
 ```
-Developer                     DevOps Agent                    GitOps Repo / ArgoCD
-──────────────────────────────────────────────────────────────────────────────────
-1. Pastes GitHub repo URL
-   in Developer chat
-                              2. Clones repo, detects stack,
-                                 port, Dockerfile, env vars
+Developer chat                 Agent                          DevOps chat
+─────────────────────────────────────────────────────────────────────────
+1. "Deploy github.com/org/app"
 
-                              3. Asks only what's needed:
-                                 environments, domains, secrets
+                               Silently clones repo, detects:
+                               - Language / framework
+                               - Dockerfile + exposed port
+                               - Required env vars
+                               - Health check path
 
-4. Developer answers
+                               Shows onboarding form →
+                               (environments, domain, registry,
+                                secrets, DB services)
 
-                              5. Shows deployment summary,
-                                 asks developer to confirm
+2. Developer fills form
+   and confirms
 
-5. Developer clicks Confirm
+                               Saves deployment plan
+                               (status: pending_review)
+                               Notifies developer to wait
 
-                              6. Saves deployment plan
-                                 (status: pending_review)
+                                                               3. DevOps opens chat,
+                                                                  sees pending requests
 
-── DevOps engineer opens their chat ─────────────────────────────────────────────
+                                                               Agent runs security scan,
+                                                               prepares Helm values +
+                                                               ArgoCD Application CR,
+                                                               shows plan for review
 
-                              7. Lists pending requests,
-                                 runs security checks
+                                                               4. DevOps approves
 
-                              8. Prepares GitOps files,
-                                 shows DevOps for review
+                               Pushes to GitOps repo ─────────────────────────────→
+                                                                              ArgoCD syncs
+                                                                              app to cluster ✅
 
-9. DevOps approves
+                               Generates GitHub Actions CI/CD workflow
 
-                              10. Pushes Helm values + ArgoCD
-                                  Application CR to GitOps repo
-                                                                ← ArgoCD auto-syncs
-                                                                   app to cluster
-
-                              11. Generates GitHub Actions CI/CD
-                                  workflow for developer
-
-10. Developer commits workflow → every push to main auto-deploys via ArgoCD
-──────────────────────────────────────────────────────────────────────────────────
+5. Developer gets workflow
+   → commit to .github/workflows/
+   → every push to main auto-deploys
+─────────────────────────────────────────────────────────────────────────
 ```
+
+---
+
+## Features
+
+- **Automatic repo discovery** — clones GitHub repo, detects stack, Dockerfile, port, env vars, health path
+- **Interactive onboarding form** — rendered in the UI, not plain text Q&A
+- **Security scanning** — pre and post-deployment security checks
+- **GitOps-first** — pushes Helm values + ArgoCD Application CRs; ArgoCD handles all syncing
+- **Shared Helm chart** — one `charts/app/` chart for all projects; differences in per-project values files
+- **Helm validation** — lints and templates values before pushing
+- **CI/CD generation** — produces ready-to-commit GitHub Actions workflow with GHCR or custom registry support
+- **Multi-environment** — staging, prod, or any custom environment per project
+- **Cloudflare Tunnel support** — optional tunnel config per environment (no ingress needed)
+- **Role-based access** — Admin / DevOps / Developer via Microsoft Entra ID SSO or no-auth dev mode
+- **Deployment history** — all deployments, requests, and chat history stored in SQLite
 
 ---
 
@@ -55,83 +76,105 @@ Developer                     DevOps Agent                    GitOps Repo / Argo
 
 - Python 3.11+
 - Node.js 18+ (for frontend build)
-- An OpenAI-compatible LLM API (Anthropic, OpenAI, Ollama, etc.)
-- GitHub token with `repo` scope (for cloning private repos)
-- Kubernetes cluster with ArgoCD installed (for production GitOps deployments)
+- An OpenAI-compatible LLM (Anthropic Claude, OpenAI, Ollama, etc.)
+- GitHub token with `repo` scope
+- Kubernetes cluster + ArgoCD (for GitOps deployments)
 
 ---
 
 ## Quick Start (Local Dev)
 
 ```bash
-# 1. Clone and install dependencies
-git clone <this-repo>
+# 1. Clone and install
+git clone https://github.com/cloudomate/devops-agent
 cd devops-agent
 pip install -r requirements.txt
 
-# 2. Configure environment
+# 2. Configure
 cp .env.example .env
-# Edit .env — at minimum set LLM_BASE_URL, LLM_API_KEY, LLM_MODEL, GITHUB_TOKEN
+# Edit .env — minimum required: LLM_BASE_URL, LLM_API_KEY, LLM_MODEL, GITHUB_TOKEN
 
-# 3. Build the frontend
-cd devops_agent/web/frontend
-npm install
-npm run build
-cd ../../..
+# 3. Build frontend
+cd devops_agent/web/frontend && npm install && npm run build && cd ../../..
 
-# 4. Run
+# 4. Start
 python main.py serve --reload
 # Open http://localhost:8000
 ```
 
-In local dev mode (no `ENTRA_CLIENT_ID` set), all requests run as admin with full DevOps access.
+No `ENTRA_CLIENT_ID` set → runs in dev mode, all requests treated as admin with full DevOps access.
 
 ---
 
 ## Environment Variables
 
-Copy `.env.example` to `.env` and fill in:
+### Required
 
-| Variable | Required | Description |
-|----------|----------|-------------|
-| `LLM_BASE_URL` | ✅ | OpenAI-compatible API base URL |
-| `LLM_API_KEY` | ✅ | API key for the LLM provider |
-| `LLM_MODEL` | ✅ | Model name, e.g. `claude-opus-4-6` |
-| `GITHUB_TOKEN` | ✅ | GitHub PAT for cloning repos and pushing GitOps files |
-| `SECRET_KEY` | ✅ (prod) | Secret for signing OIDC session cookies |
-| `ENTRA_TENANT_ID` | SSO only | Microsoft Entra (Azure AD) tenant ID |
-| `ENTRA_CLIENT_ID` | SSO only | Entra app registration client ID |
-| `ENTRA_CLIENT_SECRET` | SSO only | Entra client secret |
-| `ENTRA_REDIRECT_URI` | SSO only | OAuth callback URL, e.g. `https://your-domain/auth/callback` |
-| `ENTRA_ADMIN_GROUP_ID` | optional | Entra group whose members get admin role |
-| `PORT` | optional | HTTP port (default: `8000`) |
-| `DATA_DIR` | optional | Directory for SQLite database (default: `/data`) |
+| Variable | Description |
+|----------|-------------|
+| `LLM_BASE_URL` | OpenAI-compatible API base URL (e.g. `https://api.anthropic.com/v1`) |
+| `LLM_API_KEY` | API key for the LLM provider |
+| `LLM_MODEL` | Model name (e.g. `claude-opus-4-6`, `gpt-4o`, `llama3`) |
+| `GITHUB_TOKEN` | GitHub PAT with `repo` scope — used for cloning and GitOps pushes |
 
-**GitOps/ArgoCD settings** (can also be set via the Settings UI):
+### Authentication (Microsoft Entra ID / Azure AD)
+
+Leave all `ENTRA_*` empty to run without auth (dev mode).
+
+| Variable | Description |
+|----------|-------------|
+| `ENTRA_TENANT_ID` | Azure AD tenant ID |
+| `ENTRA_CLIENT_ID` | App registration client ID |
+| `ENTRA_CLIENT_SECRET` | Client secret value |
+| `ENTRA_REDIRECT_URI` | OAuth callback, e.g. `https://your-domain/auth/callback` |
+| `ENTRA_ADMIN_GROUP_ID` | Entra group whose members get admin role |
+| `SECRET_KEY` | Secret for signing session cookies (required in production) |
+
+### GitOps / ArgoCD (can also be set via Settings UI)
 
 | Variable | Description |
 |----------|-------------|
 | `GITOPS_REPO` | GitOps repo slug, e.g. `myorg/gitops` |
-| `GITOPS_TOKEN` | GitHub PAT with write access to the GitOps repo (falls back to `GITHUB_TOKEN`) |
+| `GITOPS_TOKEN` | GitHub PAT with write access to GitOps repo (falls back to `GITHUB_TOKEN`) |
 | `GITOPS_BRANCH` | Target branch (default: `main`) |
 | `ARGOCD_URL` | ArgoCD server URL, e.g. `http://argocd.example.com` |
 | `ARGOCD_TOKEN` | ArgoCD API token |
+
+### Other
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `PORT` | `8000` | HTTP port |
+| `DATA_DIR` | `/data` | Directory for SQLite database |
+
+---
+
+## Settings UI
+
+All GitOps, ArgoCD, registry, and database service settings can be configured through the web UI without restarting:
+
+**Settings → Environments → Global** — set defaults for all projects:
+- GitOps repo, token, branch
+- ArgoCD URL and token
+- Container registry
+- Database service URLs (Postgres, Redis, MongoDB)
+- Cloudflare tunnel config
+
+**Settings → Environments → (per project)** — override any global setting for a specific project/environment.
 
 ---
 
 ## Docker
 
 ```bash
-# Build (ARM64 for Apple Silicon / GB10 DGX)
 docker build --platform linux/arm64 -t devops-agent:latest .
 
-# Run
 docker run -p 8000:8000 \
   -v $(pwd)/data:/data \
   --env-file .env \
   devops-agent:latest
 
-# Or with Docker Compose
+# or
 docker compose up
 ```
 
@@ -139,69 +182,53 @@ docker compose up
 
 ## Kubernetes Deployment
 
-Manifests are in `k8s/`. The app runs in namespace `devops-agent` and expects a PVC mounted at `/data` for the SQLite database.
+Manifests in `k8s/`. Runs in namespace `devops-agent` with a PVC at `/data` for the SQLite DB.
 
 ```bash
-# Apply manifests
 kubectl apply -f k8s/namespace.yaml
 kubectl apply -f k8s/pvc.yaml
-kubectl apply -f k8s/secret.yaml       # fill in your secrets first
+kubectl apply -f k8s/secret.yaml        # edit with your values first
 kubectl apply -f k8s/rbac-template.yaml
 kubectl apply -f k8s/deployment.yaml
 kubectl apply -f k8s/service.yaml
 
-# Update a secret value
+# Update a secret
 kubectl patch secret devops-agent-env -n devops-agent \
-  -p '{"data":{"KEY":"<base64-value>"}}'
-
-# Restart to pick up secret changes
+  -p '{"data":{"KEY":"<base64>"}}'
 kubectl rollout restart deployment/devops-agent -n devops-agent
-kubectl rollout status deployment/devops-agent -n devops-agent
 ```
 
 ---
 
-## Authentication (Microsoft Entra ID / Azure AD)
+## Authentication & Roles
 
-When `ENTRA_CLIENT_ID` is set, the app requires SSO login via Microsoft Entra ID.
+When `ENTRA_CLIENT_ID` is set, SSO login is required via Microsoft Entra ID.
 
-**Setup steps:**
+**Setup:**
 1. Azure Portal → Entra ID → App registrations → New registration
 2. Add redirect URI: `https://<your-domain>/auth/callback`
-3. App roles → create three roles: `Admin`, `DevOps`, `Developer`
-4. Enterprise Applications → Users and groups → assign roles to users/groups
-5. Certificates & secrets → create a client secret → copy to `ENTRA_CLIENT_SECRET`
+3. App roles → create: `Admin`, `DevOps`, `Developer`
+4. Enterprise Applications → Users and groups → assign roles
+5. Certificates & secrets → new client secret → set `ENTRA_CLIENT_SECRET`
 
-**Role mapping:**
+**Role access:**
 
-| Entra App Role | Access |
-|----------------|--------|
-| `Admin` | Full access + user management + Settings page |
-| `DevOps` | Full access: review requests, manage environments, push GitOps files |
+| Role | Capabilities |
+|------|-------------|
+| `Admin` | Everything + Settings page + user management |
+| `DevOps` | Review/approve requests, manage environments, push GitOps files, run security scans |
 | `Developer` | Onboard repos, submit deployment requests, view own projects |
-
-Members of `ENTRA_ADMIN_GROUP_ID` also receive admin access regardless of app role.
 
 ---
 
 ## GitOps / ArgoCD Setup
 
-See [`docs/gitops-setup.md`](docs/gitops-setup.md) for the full guide, including:
-
+See [`docs/gitops-setup.md`](docs/gitops-setup.md) for the full guide covering:
 - Installing ArgoCD on Kubernetes
-- Creating the shared Helm chart (`charts/app/`)
-- Generating an ArgoCD API token
-- Configuring ArgoCD to watch the GitOps repo
-- Secrets management options (Sealed Secrets, External Secrets Operator)
-
-**Quick config via Settings UI:**
-
-Open **Settings → Environments → Global**, set:
-- GitOps Repo, Token, Branch
-- ArgoCD URL and Token
-- Container Registry
-
-These can be overridden per-environment for multi-cluster setups.
+- Creating the shared Helm chart
+- Connecting ArgoCD to the GitOps repo
+- Generating ArgoCD API tokens
+- Secrets management (Sealed Secrets / External Secrets Operator)
 
 ---
 
@@ -209,54 +236,56 @@ These can be overridden per-environment for multi-cluster setups.
 
 ```
 devops_agent/
-├── agent.py              # Core streaming agent loop (LLM + tool dispatch)
-├── config.py             # Settings (pydantic-settings, reads .env)
-├── database.py           # SQLite: projects, environments, deployments, users
+├── agent.py              # Streaming agent loop — builds system prompt per persona,
+│                         # calls LLM, dispatches tool calls, streams deltas over WS
+├── config.py             # pydantic-settings — reads .env + DB overrides
+├── database.py           # SQLite: projects, environments, deployments,
+│                         # deployment_requests, chat_messages, users
 ├── tools/
-│   ├── registry.py       # All tool definitions + dispatcher (~1500 lines)
-│   ├── argocd.py         # GitOps file push, ArgoCD CR generation, CI/CD workflow
-│   ├── discovery.py      # Repo cloning, stack detection, question generation
-│   └── security.py       # Pre/post-deploy security checks
+│   ├── registry.py       # Tool schemas (OpenAI function format) + execute_tool()
+│   ├── argocd.py         # push_shared_chart, push_project_values, register_argocd_app,
+│   │                     # validate_helm_chart, generate_cicd_workflow, ArgoCDClient
+│   ├── discovery.py      # clone repo via GitHub API, detect stack/port/Dockerfile/env vars
+│   └── security.py       # pre/post-deploy security checks
 ├── deployers/
-│   ├── kubernetes.py     # Direct kubectl deployer (no GitOps)
-│   ├── ssh.py            # SSH deployer
-│   └── docker_compose.py # Docker Compose deployer
+│   ├── factory.py        # picks backend from environment type field
+│   ├── kubernetes.py     # direct kubectl deployer
+│   ├── ssh.py            # SSH deployer (paramiko)
+│   └── docker_compose.py # Docker Compose over SSH
 └── web/
-    ├── app.py            # FastAPI factory, startup (DB init + GitHub poll loop)
-    ├── oidc.py           # Microsoft Entra ID OIDC auth
+    ├── app.py            # FastAPI factory — init_db(), starts GitHub poll_loop()
+    ├── oidc.py           # Microsoft Entra ID OIDC
     ├── routes/
-    │   ├── chat.py       # WebSocket endpoint — streams agent responses
-    │   └── api.py        # REST API for sidebar data, CRUD for projects/envs
-    └── frontend/         # React (Vite) — built output served from static/
+    │   ├── chat.py       # WebSocket /ws/chat/{session_id} — streams agent responses
+    │   └── api.py        # REST: projects, environments, deployment requests, chat history
+    └── frontend/         # React + Vite — served from static/ after build
 ```
 
-**Two agent personas:**
-- **Developer** — onboards new repos, submits deployment requests; cannot approve or manage infrastructure
-- **DevOps** — reviews requests, manages environments, pushes GitOps files, approves deployments
+**Deployment backends** (resolved by environment `type` field):
 
-**Deployment backends (in priority order):**
-1. GitOps + ArgoCD — when `GITOPS_REPO` is configured (recommended)
-2. Direct Kubernetes — `kubectl apply` via in-cluster kubeconfig
-3. SSH — deploys over SSH to a remote host
-4. Docker Compose — deploys via `docker compose up` over SSH
+| Backend | When used |
+|---------|-----------|
+| GitOps + ArgoCD | `GITOPS_REPO` is set — recommended for Kubernetes |
+| Kubernetes direct | `type: kubernetes` without GitOps |
+| SSH | `type: ssh` |
+| Docker Compose | `type: docker-compose` |
 
 ---
 
 ## Development
 
 ```bash
-# Hot-reload local server
+# Backend with hot reload
 python main.py serve --reload
 
-# Frontend dev server (with HMR)
+# Frontend dev server (HMR on port 5173, proxies API to 8000)
 cd devops_agent/web/frontend
 npm run dev
 
 # Rebuild frontend for production
-npm run build
-# Output goes to devops_agent/web/static/
+npm run build   # output → devops_agent/web/static/
 
-# Inspect the database
+# Inspect database
 sqlite3 data/devops_agent.db ".tables"
 sqlite3 data/devops_agent.db "SELECT * FROM projects;"
 ```
@@ -266,15 +295,12 @@ sqlite3 data/devops_agent.db "SELECT * FROM projects;"
 ## Useful Commands
 
 ```bash
-# View logs
+# Logs
 kubectl logs -n devops-agent deployment/devops-agent -f
 
-# Check ArgoCD applications
+# ArgoCD
 kubectl get applications -n argocd
-
-# Force ArgoCD sync
+argocd app list
 argocd app sync <project>-<env>
-
-# Rollback via ArgoCD
 argocd app rollback <project>-<env> <revision>
 ```
