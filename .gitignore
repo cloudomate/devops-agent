@@ -1,0 +1,47 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+.venv/
+venv/
+env/
+*.egg-info/
+dist/
+build/
+.eggs/
+
+# Environment / secrets
+.env
+*.env
+CLAUDE.local.md
+
+# Data / runtime
+/data/
+*.db
+*.sqlite
+*.sqlite3
+
+# Frontend build artifacts (built into static/)
+devops_agent/web/frontend/node_modules/
+devops_agent/web/frontend/dist/
+
+# IDE / OS
+.idea/
+.vscode/
+*.swp
+*.swo
+.DS_Store
+Thumbs.db
+
+# Docker
+.dockerignore
+
+# Logs
+*.log
+logs/
+
+# kubeconfig / credentials
+kubeconfig
+*.pem
+*.key
+*.crt

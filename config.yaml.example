@@ -1,0 +1,5 @@
+# Example config — copy to config.yaml and fill in your values
+# (Not required at startup — you can configure projects via chat)
+
+# This file is only used if you want to pre-seed projects on first run.
+# The agent stores all project/environment data in SQLite (devops_agent.db).

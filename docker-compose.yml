@@ -1,0 +1,30 @@
+services:
+  devops-agent:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: devops-agent:local
+    ports:
+      - "8000:8000"
+    env_file:
+      - .env
+    environment:
+      - PYTHONPATH=/app
+      - DATA_DIR=/data
+    volumes:
+      # Persistent database
+      - agent-data:/data
+      # Mount your local kubeconfig for local dev (read-only)
+      - ${KUBECONFIG:-~/.kube/config}:/app/.kube/config:ro
+      # SSH keys for SSH-based deployers (read-only)
+      - ${SSH_KEY_PATH:-~/.ssh}:/home/agent/.ssh:ro
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/')"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+
+volumes:
+  agent-data:

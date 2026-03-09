@@ -1,0 +1,91 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: devops-agent
+  namespace: devops-agent
+  labels:
+    app: devops-agent
+spec:
+  replicas: 1   # single replica — SQLite is not multi-writer safe
+  selector:
+    matchLabels:
+      app: devops-agent
+  template:
+    metadata:
+      labels:
+        app: devops-agent
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1001
+        fsGroup: 1001
+
+      volumes:
+        # ── Kubeconfig: merged config with all managed cluster contexts ──────
+        - name: kubeconfig
+          secret:
+            secretName: devops-agent-kubeconfig
+            defaultMode: 0400   # read-only, owner only
+        # ── SSH key for SSH-based deployers ────────────────────────────────
+        - name: ssh-key
+          secret:
+            secretName: devops-agent-ssh
+            defaultMode: 0400
+        # ── Persistent SQLite database ──────────────────────────────────────
+        - name: data
+          persistentVolumeClaim:
+            claimName: devops-agent-data
+
+      containers:
+        - name: devops-agent
+          image: ghcr.io/your-org/devops-agent:latest   # replace with your registry
+          imagePullPolicy: Always
+          ports:
+            - name: http
+              containerPort: 8000
+              protocol: TCP
+
+          envFrom:
+            - secretRef:
+                name: devops-agent-env
+
+          env:
+            - name: KUBECONFIG
+              value: /app/.kube/config
+            - name: DATA_DIR
+              value: /data
+
+          volumeMounts:
+            - name: kubeconfig
+              mountPath: /app/.kube/config
+              subPath: config          # the key in the Secret is 'config'
+              readOnly: true
+            - name: ssh-key
+              mountPath: /home/agent/.ssh/id_rsa
+              subPath: id_rsa
+              readOnly: true
+            - name: data
+              mountPath: /data
+
+          resources:
+            requests:
+              cpu: 100m
+              memory: 256Mi
+            limits:
+              cpu: 500m
+              memory: 512Mi
+
+          livenessProbe:
+            httpGet:
+              path: /
+              port: 8000
+            initialDelaySeconds: 15
+            periodSeconds: 30
+            timeoutSeconds: 5
+
+          readinessProbe:
+            httpGet:
+              path: /
+              port: 8000
+            initialDelaySeconds: 5
+            periodSeconds: 10
